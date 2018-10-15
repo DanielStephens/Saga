@@ -7,9 +7,7 @@
 		</encoder>
 	</appender>
 
-	<logger name="org.springframework" level="ERROR" additivity="false">
-		<appender-ref ref="CONSOLE" />
-	</logger>
+	<logger name="org.springframework" level="ERROR" />
 
 	<root level="TRACE">
 		<appender-ref ref="CONSOLE" />
