@@ -4,11 +4,13 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+import com.djs.saga.core.display.SagaToStringBuilder;
 import com.djs.saga.core.saga.lifecycle.SagaEvents;
 import com.djs.saga.core.saga.lifecycle.SagaLifecycleHandler;
 import com.djs.saga.core.step.BakedStep;
 import com.djs.saga.core.step.Step;
 import com.djs.saga.core.step.StepOutput;
+import com.djs.saga.core.step.StepParams;
 import com.djs.saga.core.step.StepPromise;
 
 import lombok.AllArgsConstructor;
@@ -19,57 +21,57 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class SagaImpl<SAGA_INPUT> implements Saga<SAGA_INPUT> {
 
+	private static final String LINE_SEPARATOR = System.lineSeparator();
+
 	@Getter
 	private final SagaId sagaId;
-
 	private final SagaLifecycleHandler<SAGA_INPUT> lifecycleHandler;
-
 	private final Step<SAGA_INPUT> step;
 
 	@Override
-	public SagaOutput<SAGA_INPUT> run(SAGA_INPUT sagaInput) {
-		UUID correlationId = UUID.randomUUID();
-		String fqn = String.format("SAGA(%s:%s)", sagaId.getName(), sagaId.getVersion());
+	public SagaOutput<SAGA_INPUT> run(UUID correlationId, SAGA_INPUT sagaInput) {
+		SagaToStringBuilder toStringBuilder = SagaToStringBuilder.start(4, 20, 100)
+				.appendSaga(sagaId, sagaInput);
 		SagaInput<SAGA_INPUT> i = new SagaInput<>(
 				this,
 				correlationId,
 				sagaInput
 		);
+		log.debug("[SAGA-{}] Saga will be run with input [{}].{}{}", correlationId, sagaInput, LINE_SEPARATOR, toStringBuilder.build());
 		lifecycleHandler.before(i);
 
 		CompletableFuture<Void> promise = new CompletableFuture<>();
-		BakedStep bakedStep = (id) -> step.run(fqn, id, sagaInput);
+		BakedStep bakedStep = () -> step.run(new StepParams(toStringBuilder, correlationId), sagaInput);
 		Consumer<StepOutput> instrumenter = new Consumer<StepOutput>() {
 			@Override
 			public void accept(StepOutput stepOutput) {
 				CompletableFuture<StepPromise> inputPromise = stepOutput.getPromise();
 
-				promise.whenComplete((v, t) -> {
-					if (t != null) {
-						inputPromise.completeExceptionally(t);
-					} else {
-						inputPromise.cancel(true);
-					}
-				});
+				promise.whenComplete((v, t) -> inputPromise.cancel(true));
 
 				inputPromise.whenComplete((p, t) -> {
 					if (t != null) {
-						log.error("The step [{}] completed exceptionally so the saga [{}] will complete exceptionally.", stepOutput.getStepFqn(), fqn);
 						promise.completeExceptionally(t);
 					} else if (p.getBakedStep() != null) {
-						StepOutput nextStepOutput = p.getBakedStep().run(UUID.randomUUID());
-						log.debug("The step [{}] completed successfully, the next step [{}] of the saga [{}] will now run.", stepOutput.getStepFqn(), nextStepOutput.getStepFqn(), fqn);
+						log.debug("[SAGA-{}] Saga completed a step successfully and will progress to the next step.{}{}", correlationId, LINE_SEPARATOR, toStringBuilder.build());
+						StepOutput nextStepOutput = p.getBakedStep().run();
 						this.accept(nextStepOutput);
 					} else {
-						log.debug("The step [{}] completed successfully and was the last step of the saga [{}] which will now complete successfully.", stepOutput.getStepFqn(), fqn);
 						promise.complete(null);
 					}
 				});
 			}
 		};
-		instrumenter.accept(bakedStep.run(UUID.randomUUID()));
+		instrumenter.accept(bakedStep.run());
 
 		promise.whenComplete((v, t) -> lifecycleHandler.after(i));
+		promise.whenComplete((v, t) -> {
+			if(t != null){
+				log.error("[SAGA-{}] Saga completed exceptionally.{}{}{}{}", correlationId, LINE_SEPARATOR, toStringBuilder.build(), LINE_SEPARATOR, t);
+			}else{
+				log.debug("[SAGA-{}] Saga completed successfully.{}{}", correlationId, LINE_SEPARATOR, toStringBuilder.build());
+			}
+		});
 		return new SagaOutput<>(this, correlationId, sagaInput, promise);
 	}
 

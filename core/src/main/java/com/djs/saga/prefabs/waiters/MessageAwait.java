@@ -1,7 +1,10 @@
 package com.djs.saga.prefabs.waiters;
 
+import static org.springframework.integration.IntegrationMessageHeaderAccessor.CORRELATION_ID;
+
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
 import org.springframework.integration.IntegrationMessageHeaderAccessor;
@@ -16,29 +19,42 @@ import com.djs.saga.core.branch.builder.Waiter;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 public class MessageAwait {
 
-	public ExpectedMessagesChannel expectMessages(Predicate<MessageGroup> messageGroupPredicate) {
+	public ExpectedMessagesChannel expectCorrelatedMessages(Predicate<MessageGroup> messageGroupPredicate) {
 		return new ExpectedMessagesChannel(messageGroupPredicate);
 	}
 
 	public ExpectedMessageChannel expectMessage(Predicate<Message<?>> messagePredicate) {
+		return new ExpectedMessageChannel((id, msg) -> messagePredicate.test(msg));
+	}
+
+	public ExpectedMessageChannel expectMessage(BiPredicate<UUID, Message<?>> messagePredicate) {
 		return new ExpectedMessageChannel(messagePredicate);
+	}
+
+	public ExpectedMessageChannel expectCorrelatedMessage(Predicate<Message<?>> messagePredicate) {
+		return new ExpectedMessageChannel((id, msg) -> id.equals(msg.getHeaders().get(CORRELATION_ID, UUID.class)) && messagePredicate.test(msg));
 	}
 
 	@AllArgsConstructor(access = AccessLevel.PRIVATE)
 	public static class ExpectedMessageChannel {
 
-		private final Predicate<Message<?>> messagePredicate;
+		private final BiPredicate<UUID, Message<?>> messagePredicate;
 
 		public Waiter<Message<?>> on(SubscribableChannel subscribableChannel) {
 			return correlationId -> {
 				CompletableFuture<Message<?>> future = new CompletableFuture<>();
 
 				MessageHandler messageHandler = msg -> {
-					if (messagePredicate.test(msg)) {
+					if (messagePredicate.test(correlationId, msg)) {
+						log.debug("Completing waiter with message [{}] on channel [{}]", msg, subscribableChannel);
 						future.complete(msg);
+					}else{
+						log.trace("Ignoring message [{}] on channel [{}] as it does not match the predicate.", msg, subscribableChannel);
 					}
 				};
 
@@ -83,7 +99,7 @@ public class MessageAwait {
 				CompletableFuture<MessageGroup> future = new CompletableFuture<>();
 
 				MessageHandler messageHandler = msg -> {
-					UUID id = msg.getHeaders().get(IntegrationMessageHeaderAccessor.CORRELATION_ID, UUID.class);
+					UUID id = msg.getHeaders().get(CORRELATION_ID, UUID.class);
 					if (!correlationId.equals(id)) {
 						return;
 					}

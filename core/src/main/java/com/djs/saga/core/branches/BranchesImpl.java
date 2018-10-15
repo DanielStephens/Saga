@@ -9,6 +9,7 @@ import java.util.stream.Collectors;
 
 import com.djs.saga.core.branch.Branch;
 import com.djs.saga.core.branch.BranchOutput;
+import com.djs.saga.core.branch.BranchParams;
 import com.djs.saga.core.branch.BranchPromise;
 
 import lombok.AllArgsConstructor;
@@ -19,9 +20,10 @@ public class BranchesImpl implements Branches {
 	private final Collection<Branch> branches;
 
 	@Override
-	public BranchesOutput await(String parentName, UUID correlationId) {
+	public BranchesOutput await(BranchesParams branchesParams) {
+		BranchParams branchParams = new BranchParams(branchesParams.getToStringBuilder(), branchesParams.getSagaId(), branchesParams.getStepId());
 		List<BranchOutput> branchOutputs = branches.stream()
-				.map(b -> b.await(parentName, correlationId))
+				.map(b -> b.await(branchParams))
 				.collect(Collectors.toList());
 
 		CompletableFuture[] futures = branchOutputs.stream()
@@ -36,6 +38,7 @@ public class BranchesImpl implements Branches {
 		anyOf.whenComplete((b, t) -> Arrays.stream(futures).forEach(f -> f.cancel(true)));
 
 		return new BranchesOutput(
+				branchesParams.getSagaId(),
 				branchOutputs,
 				anyOf
 		);

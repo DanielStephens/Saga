@@ -1,5 +1,7 @@
 package com.djs.saga.core.saga;
 
+import java.util.UUID;
+
 import com.djs.saga.core.saga.lifecycle.SagaEvents;
 
 /**
@@ -9,7 +11,11 @@ import com.djs.saga.core.saga.lifecycle.SagaEvents;
  */
 public interface Saga<SAGA_INPUT> {
 
-	SagaOutput<SAGA_INPUT> run(SAGA_INPUT sagaInput);
+	default SagaOutput<SAGA_INPUT> run(SAGA_INPUT sagaInput){
+		return run(UUID.randomUUID(), sagaInput);
+	}
+
+	SagaOutput<SAGA_INPUT> run(UUID correlationId, SAGA_INPUT sagaInput);
 
 	void send(SagaEvents.SagaEvent sagaEvent);
 

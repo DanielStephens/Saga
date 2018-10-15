@@ -54,7 +54,12 @@ public class Compensators {
 		}
 
 		private <T> DeadEndCompensator<T> asDeadEnd(Compensator<T> compensation) {
-			return waiter -> correlationId -> compensation.instrument(waiter).await(correlationId).thenApply(f -> DeadEnd.INSTANCE);
+			return waiter -> correlationId -> {
+				CompletableFuture<T> f1 = compensation.instrument(waiter).await(correlationId);
+				CompletableFuture<DeadEnd> f2 = f1.thenApply(f -> DeadEnd.INSTANCE);
+				f2.whenComplete((v, t) -> f1.cancel(true));
+				return f2;
+			};
 		}
 
 		public <T> Compensator<T> conditionalOn(Supplier<Supplier<Boolean>> retryConditionSupplier) {
@@ -67,7 +72,9 @@ public class Compensators {
 				Consumer<CompletableFuture<T>> instrumenter = new Consumer<CompletableFuture<T>>() {
 					@Override
 					public void accept(CompletableFuture<T> inputCompletableFuture) {
-						inputCompletableFuture.whenCompleteAsync((i, t) -> {
+						future.whenComplete((v, t) -> inputCompletableFuture.cancel(true));
+
+						inputCompletableFuture.whenComplete((i, t) -> {
 							if (t != null) {
 								future.completeExceptionally(t);
 							} else if (shouldRetry.get()) {
@@ -79,18 +86,9 @@ public class Compensators {
 								future.complete(i);
 							}
 						});
-
-						future.whenComplete((v, t) -> {
-							if(t != null){
-								inputCompletableFuture.completeExceptionally(t);
-							}else{
-								inputCompletableFuture.cancel(true);
-							}
-						});
 					}
 				};
 				instrumenter.accept(waiter.await(correlationId));
-
 				return future;
 			};
 		}

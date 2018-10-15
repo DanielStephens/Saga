@@ -4,6 +4,6 @@ import java.util.UUID;
 
 public interface Branches {
 
-	BranchesOutput await(String parentName, UUID correlationId);
+	BranchesOutput await(BranchesParams branchesParams);
 
 }

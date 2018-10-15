@@ -1,5 +1,6 @@
 package com.djs.saga.core.branch.builder;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -26,7 +27,12 @@ public class BranchBuilderThen<AWAITED_VALUE> extends BranchBuilderBuild<AWAITED
 	public <R> BranchBuilderThen<R> map(Function<AWAITED_VALUE, R> map) {
 		return new BranchBuilderThen<>(
 				name,
-				correlationId -> waiter.await(correlationId).thenApply(map)
+				correlationId -> {
+					CompletableFuture<AWAITED_VALUE> f1 = waiter.await(correlationId);
+					CompletableFuture<R> f2 = f1.thenApply(map);
+					f2.whenComplete((r, t) -> f1.cancel(true));
+					return f2;
+				}
 		);
 	}
 

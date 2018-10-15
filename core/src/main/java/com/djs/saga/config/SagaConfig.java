@@ -5,27 +5,31 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
+import javax.inject.Inject;
 import javax.inject.Named;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.messaging.MessageChannel;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.messaging.Message;
 import org.springframework.transaction.support.TransactionOperations;
 
 import com.djs.saga.core.branch.builder.BranchBuilder;
 import com.djs.saga.core.register.Sagas;
 import com.djs.saga.core.saga.builder.SagaBuilder;
 import com.djs.saga.core.step.builder.StepBuilder;
+import com.djs.saga.prefabs.actions.MessageActions;
 import com.djs.saga.prefabs.compensators.Compensators;
 import com.djs.saga.prefabs.waiters.Await;
 import com.djs.saga.prefabs.waiters.MessageAwait;
 
 @Configuration
-@Import({SagaConfig.SagaRecoveryConfig.class, SagaConfig.MessageSagaConfig.class})
+@Import({SagaConfig.MessageSagaConfig.class})
 public class SagaConfig {
 
 	private static final String EXECUTOR_EXECUTOR = "executorExecutor";
@@ -78,19 +82,20 @@ public class SagaConfig {
 	}
 
 	@Configuration
-	@ConditionalOnBean(TransactionOperations.class)
-	public static class SagaRecoveryConfig {
-
-
-	}
-
-	@Configuration
-	@ConditionalOnClass(MessageChannel.class)
+	@ConditionalOnClass(Message.class)
 	public static class MessageSagaConfig {
 
 		@Bean
 		MessageAwait messageAwait() {
 			return new MessageAwait();
+		}
+
+		@Bean
+		@Lazy
+		MessageActions messageActions(Optional<TransactionOperations> transactionOperations) {
+			TransactionOperations txTemplate = transactionOperations
+					.orElseThrow(() -> new UnsupportedOperationException("A [MessageActions] bean was used but no bean of type [TransactionOperations] was available."));
+			return new MessageActions(txTemplate);
 		}
 
 	}
