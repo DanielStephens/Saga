@@ -13,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 
 import javax.inject.Inject;
 
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.context.annotation.Bean;
@@ -25,7 +24,6 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
-import org.springframework.util.StopWatch;
 
 import com.djs.saga.config.SagaConfig;
 import com.djs.saga.core.branch.Branch;
@@ -92,13 +90,14 @@ public class IntegrationTest {
 		sw.stop();
 
 		// We send a message immediately, as our initial message is
-		// 'invalid', no connected responses should end our first
+		// 'invalid', no associated responses should end our first
 		// step. We will therefore wait 5 seconds until our timeout
-		// retry takes affect. After 5 seconds we will send a valid
-		// request to the flight service.
-		// The flight service responses have a delay on 1 second so
-		// after 6 seconds we will receive a successful response from
-		// the flight service and will move onto the next step.
+		// takes affect.
+		// After 5 seconds we will send a valid request to the flight
+		// service. The flight service responses have a delay of 1
+		// second so after 6 seconds we will receive a successful
+		// response from the flight service and will move onto the
+		// next step.
 		// We will send a valid request to the hotel service. As it
 		// also has a delay of 1 second, we will receive a successful
 		// response on the 7th second.
@@ -124,7 +123,7 @@ public class IntegrationTest {
 				.build();
 	}
 
-	private Collection<Branch> flightBookingOutcomes(UUID uuid, Boolean valid, Action<Boolean> action) {
+	private Collection<Branch> flightBookingOutcomes(UUID correlationId, Boolean valid, Action<Boolean> action) {
 		// 6. We create 3 branches for the 'book flight' step, this
 		// indicates that there are three possible outcomes of the
 		// initial action (sending a message to the flight service)
@@ -134,55 +133,55 @@ public class IntegrationTest {
 				// continue on to the next step (attempting to book
 				// our hotel).
 				branchBuilder.start("valid response received")
-						.await(messageAwait.expectCorrelatedMessage(this::isSuccessfulResponse).on(flightService))
-						.map(m -> true)
+						.await(messageAwait.expectMessage(this::isSuccessfulResponse).correlatedBy(correlationId).on(flightService))
+						.map(m -> "A long long long long long long long string")
 						.progress(bookHotelStep())
 						.build(),
 
 				// 8. The second branch occurs if we receive a
 				// response telling us that the booking was
-				// unsuccessful, in this case we choose to retry the
-				// original input, with the original action.
+				// unsuccessful, in this case we choose to perform the
+				// original action, with the original input.
 				branchBuilder.start("invalid response received")
-						.await(messageAwait.expectCorrelatedMessage(this::isUnsuccessfulResponse).on(flightService))
+						.await(messageAwait.expectMessage(this::isUnsuccessfulResponse).correlatedBy(correlationId).on(flightService))
 						.use(m -> log.debug("An invalid message was received, retrying the same message"))
-						// retry with original value
-						.compensate(compensators.retry(action).withValue(valid).forever())
+						// perform with original value
+						.compensate(compensators.perform(correlationId, action).withValue(valid).forever())
 						.build(),
 
 				// 9. The third branch waits for an amount of time
 				// before executing so a similar method could be used
 				// to perform a true timeout. In this case rather
-				// than giving up after the time limit, we retry the
+				// than giving up after the time limit, we perform the
 				// original action, but this time using a different
 				// input (the hard coded value of true).
 				branchBuilder.start("no response")
 						.await(await.delay(5, TimeUnit.SECONDS))
 						.use(d -> log.debug("A timeout occurred after [{} {}]", d.getDelay(), d.getUnit()))
-						// retry with 'true' value
-						.compensate(compensators.retry(action).withValue(true).forever())
+						// perform with 'true' value
+						.compensate(compensators.perform(correlationId, action).withValue(true).forever())
 						.build()
 		);
 	}
 
-	private Step<Boolean> bookHotelStep() {
+	private Step<String> bookHotelStep() {
 		// 10. The following step is similar but simpler. The action
 		// we take is still to send a message, this time to the
 		// 'hotelService'. However we only have one branch set up.
 		return stepBuilder.start("book hotel")
-				.withAction(messageActions.sendMessage(this::messageBuilder).to(hotelService))
+				.withAction(messageActions.sendMessage((UUID id, String s) -> messageBuilder(id, true)).to(hotelService))
 				.withBranches(this::hotelBookingOutcomes)
 				.build();
 	}
 
-	private Collection<Branch> hotelBookingOutcomes(UUID uuid, Boolean valid, Action<Boolean> action) {
+	private Collection<Branch> hotelBookingOutcomes(UUID correlationId, String input, Action<String> action) {
 		return Lists.newArrayList(
 				// 11. Our single branch is slightly risky, as if we
 				// do not receive the expected message then we may
 				// hang forever awaiting this branch. But this keeps
 				// the test slightly simpler.
 				branchBuilder.start("valid response received")
-						.await(messageAwait.expectCorrelatedMessage(this::isSuccessfulResponse).on(hotelService))
+						.await(messageAwait.expectMessage(this::isSuccessfulResponse).correlatedBy(correlationId).on(hotelService))
 						.map(m -> true)
 						.build()
 		);

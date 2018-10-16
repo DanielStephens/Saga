@@ -24,33 +24,38 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class MessageAwait {
 
-	public ExpectedMessagesChannel expectCorrelatedMessages(Predicate<MessageGroup> messageGroupPredicate) {
-		return new ExpectedMessagesChannel(messageGroupPredicate);
+	public ExpectedMessageCorrelation expectMessage(Predicate<Message<?>> messagePredicate) {
+		return new ExpectedMessageCorrelation(messagePredicate);
 	}
 
-	public ExpectedMessageChannel expectMessage(Predicate<Message<?>> messagePredicate) {
-		return new ExpectedMessageChannel((id, msg) -> messagePredicate.test(msg));
-	}
+	@AllArgsConstructor(access = AccessLevel.PRIVATE)
+	public static class ExpectedMessageCorrelation {
 
-	public ExpectedMessageChannel expectMessage(BiPredicate<UUID, Message<?>> messagePredicate) {
-		return new ExpectedMessageChannel(messagePredicate);
-	}
+		private final Predicate<Message<?>> messagePredicate;
 
-	public ExpectedMessageChannel expectCorrelatedMessage(Predicate<Message<?>> messagePredicate) {
-		return new ExpectedMessageChannel((id, msg) -> id.equals(msg.getHeaders().get(CORRELATION_ID, UUID.class)) && messagePredicate.test(msg));
+		public ExpectedMessageChannel correlatedBy(UUID correlationId) {
+			return new ExpectedMessageChannel(messagePredicate, correlationId);
+		}
+
 	}
 
 	@AllArgsConstructor(access = AccessLevel.PRIVATE)
 	public static class ExpectedMessageChannel {
 
-		private final BiPredicate<UUID, Message<?>> messagePredicate;
+		private final Predicate<Message<?>> messagePredicate;
+		private final UUID correlationId;
 
 		public Waiter<Message<?>> on(SubscribableChannel subscribableChannel) {
-			return correlationId -> {
+			return () -> {
 				CompletableFuture<Message<?>> future = new CompletableFuture<>();
 
 				MessageHandler messageHandler = msg -> {
-					if (messagePredicate.test(correlationId, msg)) {
+					if(!correlationId.equals(msg.getHeaders().get(CORRELATION_ID, UUID.class))){
+						log.trace("Ignoring message [{}] on channel [{}] as it does not have the expected correlationId [{}].", msg, subscribableChannel, correlationId);
+						return;
+					}
+
+					if (messagePredicate.test(msg)) {
 						log.debug("Completing waiter with message [{}] on channel [{}]", msg, subscribableChannel);
 						future.complete(msg);
 					}else{
@@ -66,13 +71,17 @@ public class MessageAwait {
 
 	}
 
+	public ExpectedMessageCorrelated expectMessages(Predicate<MessageGroup> messageGroupPredicate) {
+		return new ExpectedMessageCorrelated(messageGroupPredicate);
+	}
+
 	@AllArgsConstructor(access = AccessLevel.PRIVATE)
 	public static class ExpectedMessageCorrelated {
 
 		private final Predicate<MessageGroup> messageGroupPredicate;
 
-		public ExpectedMessagesChannel correlatedBy(CorrelationStrategy correlationStrategy) {
-			return new ExpectedMessagesChannel(messageGroupPredicate);
+		public ExpectedMessagesChannel correlatedBy(UUID correlationId) {
+			return new ExpectedMessagesChannel(messageGroupPredicate, correlationId);
 		}
 
 	}
@@ -81,9 +90,10 @@ public class MessageAwait {
 	public static class ExpectedMessagesChannel {
 
 		private final Predicate<MessageGroup> messageGroupPredicate;
+		private final UUID correlationId;
 
 		public ExpectedMessagesStorage on(SubscribableChannel subscribableChannel) {
-			return new ExpectedMessagesStorage(messageGroupPredicate, subscribableChannel);
+			return new ExpectedMessagesStorage(messageGroupPredicate, correlationId, subscribableChannel);
 		}
 
 	}
@@ -92,10 +102,11 @@ public class MessageAwait {
 	private static class ExpectedMessagesStorage {
 
 		private final Predicate<MessageGroup> messageGroupPredicate;
+		private final UUID correlationId;
 		private final SubscribableChannel subscribableChannel;
 
 		public Waiter<MessageGroup> usingStore(MessageGroupStore messageGroupStore) {
-			return correlationId -> {
+			return () -> {
 				CompletableFuture<MessageGroup> future = new CompletableFuture<>();
 
 				MessageHandler messageHandler = msg -> {

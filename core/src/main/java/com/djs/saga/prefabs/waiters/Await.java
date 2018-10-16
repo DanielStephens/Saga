@@ -20,11 +20,11 @@ public class Await {
 	}
 
 	public <AWAITED_VALUE> Waiter<AWAITED_VALUE> nothing(AWAITED_VALUE awaitedValue) {
-		return correlationId -> CompletableFuture.completedFuture(awaitedValue);
+		return () -> CompletableFuture.completedFuture(awaitedValue);
 	}
 
 	public Waiter<Delay> delay(long delay, TimeUnit unit) {
-		return correlationId -> {
+		return () -> {
 			Delay d = new Delay(delay, unit);
 			CompletableFuture<Delay> future = new CompletableFuture<>();
 			ScheduledFuture<Boolean> schedule = scheduledExecutorService.schedule(() -> future.complete(d), delay, unit);

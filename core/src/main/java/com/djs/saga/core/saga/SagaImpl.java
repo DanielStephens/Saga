@@ -30,7 +30,7 @@ public class SagaImpl<SAGA_INPUT> implements Saga<SAGA_INPUT> {
 
 	@Override
 	public SagaOutput<SAGA_INPUT> run(UUID correlationId, SAGA_INPUT sagaInput) {
-		SagaToStringBuilder toStringBuilder = SagaToStringBuilder.start(4, 20, 100)
+		SagaToStringBuilder toStringBuilder = SagaToStringBuilder.start(4)
 				.appendSaga(sagaId, sagaInput);
 		SagaInput<SAGA_INPUT> i = new SagaInput<>(
 				this,

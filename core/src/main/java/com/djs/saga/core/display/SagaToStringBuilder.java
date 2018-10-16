@@ -1,48 +1,41 @@
 package com.djs.saga.core.display;
 
-import java.util.Collections;
-import java.util.List;
 import java.util.stream.IntStream;
 
 import com.djs.saga.core.saga.SagaId;
-import com.google.common.collect.ImmutableList;
 
 import lombok.RequiredArgsConstructor;
 
-public class SagaToStringBuilder {
+public class SagaToStringBuilder implements ToStringPart {
 
 	private final int indent;
-	private final int inputTrim;
-	private final int definitionTrim;
-	private final List<ToString> lines;
-	private String cache;
+	private final int inputPad;
+	private final ToStringPart parent;
+	private final ToStringPart self;
 
-	public SagaToStringBuilder(int indent, int inputTrim, int definitionTrim, List<ToString> lines) {
+	private String fqCache;
+
+	public SagaToStringBuilder(int indent, int inputPad, ToStringPart parent, ToStringPart self) {
 		this.indent = indent;
-		this.inputTrim = inputTrim;
-		this.definitionTrim = definitionTrim;
-		this.lines = lines;
+		this.inputPad = inputPad;
+		this.parent = parent;
+		this.self = self;
 	}
 
-	public static SagaToStringBuilder start(int indent, int inputTrim, int definitionTrim) {
-		return new SagaToStringBuilder(indent, inputTrim, definitionTrim, Collections.emptyList());
+	public static SagaToStringBuilder start(int indent) {
+		return new SagaToStringBuilder(indent, 0, null, null){
+			@Override
+			public void append(StringBuilder sb, int inputPad) {
+			}
+		};
 	}
 
-	private static String cut(Object o, int size) {
-		String str = o.toString();
-		str = str.substring(0, Math.min(str.length(), size));
-		return str;
-	}
-
-	private SagaToStringBuilder append(ToString toString) {
+	private SagaToStringBuilder append(ToStringPart toStringPart) {
 		return new SagaToStringBuilder(
 				indent,
-				inputTrim,
-				definitionTrim,
-				ImmutableList.<ToString>builder()
-						.addAll(lines)
-						.add(toString)
-						.build()
+				Math.max(toStringPart.inputSize(), inputPad),
+				this,
+				toStringPart
 		);
 	}
 
@@ -58,112 +51,104 @@ public class SagaToStringBuilder {
 		return append(new Branch(branchName));
 	}
 
+	public void append(StringBuilder sb, int inputPad) {
+		if (this.inputPad != inputPad) {
+			parent.append(sb, inputPad);
+			if(sb.length() != 0){
+				sb.append(System.lineSeparator());
+			}
+			IntStream.range(0, indent).forEach(i -> sb.append(" "));
+			self.append(sb, inputPad);
+		} else if (fqCache == null) {
+			parent.append(sb, inputPad);
+			if(sb.length() != 0){
+				sb.append(System.lineSeparator());
+			}
+			IntStream.range(0, indent).forEach(i -> sb.append(" "));
+			self.append(sb, inputPad);
+			fqCache = sb.toString();
+		} else {
+			sb.append(fqCache);
+		}
+	}
+
 	public String build() {
-		if (cache != null) {
-			return cache;
+		if (fqCache == null){
+			append(new StringBuilder(), inputPad);
+		}
+		return fqCache;
+	}
+
+	@Override
+	public int inputSize() {
+		return inputPad;
+	}
+
+	private static class Saga implements ToStringPart {
+
+		private final String input;
+		private final String sagaId;
+
+		public Saga(Object input, SagaId sagaId) {
+			String edge = input instanceof String ? "\"" : "";
+			this.input = String.format("%s%s%s", edge, input, edge);
+			this.sagaId = String.format("%s:%s", sagaId.getName(), sagaId.getVersion());
 		}
 
-		StringBuilder sb = new StringBuilder(lines.size() * 20);
+		public void append(StringBuilder sb, int inputPad) {
+			sb.append("INPUT[ ").append(input).append(" ] ");
+			IntStream.range(0, Math.max(0, inputPad - inputSize())).forEach(i -> sb.append("-"));
+			sb.append("-> SAGA[ ").append(sagaId).append(" ]");
+		}
 
-		lines.forEach(s -> s.append(sb, indent, Math.max(inputTrim, 5), Math.max(definitionTrim, 5)));
-
-		cache = sb.toString();
-		return cache;
-	}
-
-	private interface ToString {
-
-		void append(StringBuilder sb, int indent, int inputTrim, int definitionTrim);
-
-	}
-
-	@RequiredArgsConstructor
-	private static class Saga implements ToString {
-
-		private final Object value;
-		private final SagaId sagaId;
-		private String cache;
-
-
-		public void append(StringBuilder sb, int indent, int inputTrim, int definitionTrim) {
-			if (cache != null) {
-				sb.append(cache);
-				return;
-			}
-
-			StringBuilder sb2 = new StringBuilder(indent + inputTrim + definitionTrim + 12);
-
-			String o = cut(value, inputTrim);
-			int diff = inputTrim - o.length();
-			String v = String.valueOf(sagaId.getVersion());
-			String n = cut(sagaId.getName(), definitionTrim - (v.length() + 1));
-
-			IntStream.range(0, indent).forEach(i -> sb2.append(" "));
-			sb2.append("INPUT[ ").append(o).append(" ]");
-			IntStream.range(0, diff).forEach(i -> sb2.append("-"));
-			sb2.append("--> SAGA[ ").append(n).append(" ]");
-
-			cache = sb2.toString();
-			sb.append(cache);
+		@Override
+		public int inputSize() {
+			return input.length();
 		}
 
 	}
 
 	@RequiredArgsConstructor
-	private static class Step implements ToString {
+	private static class Step implements ToStringPart {
 
-		private final Object value;
+		private final String input;
 		private final String stepName;
-		private String cache;
 
+		public Step(Object input, String stepName) {
+			String edge = input instanceof String ? "\"" : "";
+			this.input = String.format("%s%s%s", edge, input, edge);
+			this.stepName = stepName;
+		}
 
-		public void append(StringBuilder sb, int indent, int inputTrim, int definitionTrim) {
-			if (cache != null) {
-				sb.append(cache);
-				return;
-			}
+		public void append(StringBuilder sb, int inputPad) {
+			sb.append("INPUT[ ").append(input).append(" ] ");
+			IntStream.range(0, Math.max(0, inputPad - inputSize())).forEach(i -> sb.append("-"));
+			sb.append("-> STEP[ ").append(stepName).append(" ]");
+		}
 
-			StringBuilder sb2 = new StringBuilder(indent + inputTrim + definitionTrim + 12);
-
-			String o = cut(value, inputTrim);
-			int diff = inputTrim - o.length();
-			String n = cut(stepName, definitionTrim);
-
-			sb2.append(System.lineSeparator());
-			IntStream.range(0, indent).forEach(i -> sb2.append(" "));
-			sb2.append("INPUT[ ").append(o).append(" ]");
-			IntStream.range(0, diff).forEach(i -> sb2.append("-"));
-			sb2.append("--> STEP[ ").append(n).append(" ]");
-
-			cache = sb2.toString();
-			sb.append(cache);
+		@Override
+		public int inputSize() {
+			return input.length();
 		}
 
 	}
 
-	@RequiredArgsConstructor
-	private static class Branch implements ToString {
+	private static class Branch implements ToStringPart {
 
 		private final String branchName;
-		private String cache;
 
+		public Branch(String branchName) {
+			this.branchName = branchName;
+		}
 
-		public void append(StringBuilder sb, int indent, int inputTrim, int definitionTrim) {
-			if (cache != null) {
-				sb.append(cache);
-				return;
-			}
+		public void append(StringBuilder sb, int inputPad) {
+			IntStream.range(0, inputPad + 10).forEach(i -> sb.append(" "));
+			sb.append("-> BRANCH[ ").append(branchName).append(" ]");
+		}
 
-			StringBuilder sb2 = new StringBuilder(indent + inputTrim + definitionTrim + 14);
-
-			String n = cut(branchName, definitionTrim);
-
-			sb2.append(System.lineSeparator());
-			IntStream.range(0, indent + inputTrim + 13).forEach(i -> sb2.append(" "));
-			sb2.append("BRANCH[ ").append(n).append(" ]");
-
-			cache = sb2.toString();
-			sb.append(cache);
+		@Override
+		public int inputSize() {
+			return 0;
 		}
 
 	}

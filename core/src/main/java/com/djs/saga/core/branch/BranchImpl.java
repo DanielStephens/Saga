@@ -40,7 +40,7 @@ public class BranchImpl<AWAITED_VALUE> implements Branch {
 				sagaId,
 				externalisedFuture
 		);
-		CompletableFuture<AWAITED_VALUE> internalFuture = waiter.await(branchParams.getStepId());
+		CompletableFuture<AWAITED_VALUE> internalFuture = waiter.await();
 
 		internalFuture.whenComplete((v, t) -> {
 			if (externalisedFuture.isDone()) {

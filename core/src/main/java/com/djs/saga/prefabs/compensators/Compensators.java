@@ -4,6 +4,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import com.djs.saga.core.branch.builder.DeadEnd;
@@ -17,30 +18,52 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class Compensators {
 
-	public <INPUT> RetryBuilderValue<INPUT> retry(Action<INPUT> action) {
-		return new RetryBuilderValue<>(action);
+	public <AWAITED_VALUE> DeadEndCompensator<AWAITED_VALUE> fail(Function<AWAITED_VALUE, Exception> exceptionBuilder) {
+		return waiter -> () -> {
+			CompletableFuture<AWAITED_VALUE> f1 = waiter.await();
+			CompletableFuture<DeadEnd> f2 = new CompletableFuture<>();
+
+			f1.whenComplete((a, t) -> {
+				if(t != null){
+					f2.completeExceptionally(t);
+				}else{
+					f2.completeExceptionally(exceptionBuilder.apply(a));
+				}
+			});
+
+			f2.whenComplete((d, t) -> f1.cancel(true));
+			return f2;
+		};
+	}
+
+	public <INPUT> PerformBuilderValue<INPUT> perform(UUID correlationId, Action<INPUT> action) {
+		return new PerformBuilderValue<>(correlationId, action);
+	}
+
+	public PerformBuilderCondition perform(Runnable runnable) {
+		return new PerformBuilderCondition(runnable);
 	}
 
 	@AllArgsConstructor
-	public static class RetryBuilderValue<INPUT> {
+	public static class PerformBuilderValue<INPUT> {
 
+		private final UUID correlationId;
 		private final Action<INPUT> action;
 
-		public RetryBuilderCondition<INPUT> withValue(INPUT input) {
+		public PerformBuilderCondition withValue(INPUT input) {
 			return withValue(() -> input);
 		}
 
-		public RetryBuilderCondition<INPUT> withValue(Supplier<INPUT> inputSupplier) {
-			return new RetryBuilderCondition<>(action, inputSupplier);
+		public PerformBuilderCondition withValue(Supplier<INPUT> inputSupplier) {
+			return new PerformBuilderCondition(() -> action.perform(correlationId, inputSupplier.get()));
 		}
 
 	}
 
 	@AllArgsConstructor
-	public static class RetryBuilderCondition<INPUT> {
+	public static class PerformBuilderCondition {
 
-		private final Action<INPUT> action;
-		private final Supplier<INPUT> inputSupplier;
+		private final Runnable runnable;
 
 		public <T> Compensator<T> times(int times) {
 			return conditionalOn(() -> {
@@ -54,8 +77,8 @@ public class Compensators {
 		}
 
 		private <T> DeadEndCompensator<T> asDeadEnd(Compensator<T> compensation) {
-			return waiter -> correlationId -> {
-				CompletableFuture<T> f1 = compensation.instrument(waiter).await(correlationId);
+			return waiter -> () -> {
+				CompletableFuture<T> f1 = compensation.instrument(waiter).await();
 				CompletableFuture<DeadEnd> f2 = f1.thenApply(f -> DeadEnd.INSTANCE);
 				f2.whenComplete((v, t) -> f1.cancel(true));
 				return f2;
@@ -63,7 +86,7 @@ public class Compensators {
 		}
 
 		public <T> Compensator<T> conditionalOn(Supplier<Supplier<Boolean>> retryConditionSupplier) {
-			return waiter -> correlationId -> {
+			return waiter -> () -> {
 				UUID compensationId = UUID.randomUUID();
 				AtomicInteger counter = new AtomicInteger(0);
 				CompletableFuture<T> future = new CompletableFuture<>();
@@ -79,8 +102,8 @@ public class Compensators {
 								future.completeExceptionally(t);
 							} else if (shouldRetry.get()) {
 								log.trace("Performing a compensation action [{}]. Number of times previously performed = {}", compensationId, counter.getAndIncrement());
-								this.accept(waiter.await(correlationId));
-								action.perform(correlationId, inputSupplier.get());
+								this.accept(waiter.await());
+								runnable.run();
 							} else {
 								log.trace("No longer performing the compensation action [{}]. Number of times previously performed = {}", compensationId, counter.get());
 								future.complete(i);
@@ -88,7 +111,7 @@ public class Compensators {
 						});
 					}
 				};
-				instrumenter.accept(waiter.await(correlationId));
+				instrumenter.accept(waiter.await());
 				return future;
 			};
 		}

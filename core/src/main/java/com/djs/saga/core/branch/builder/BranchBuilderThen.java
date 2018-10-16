@@ -27,8 +27,8 @@ public class BranchBuilderThen<AWAITED_VALUE> extends BranchBuilderBuild<AWAITED
 	public <R> BranchBuilderThen<R> map(Function<AWAITED_VALUE, R> map) {
 		return new BranchBuilderThen<>(
 				name,
-				correlationId -> {
-					CompletableFuture<AWAITED_VALUE> f1 = waiter.await(correlationId);
+				() -> {
+					CompletableFuture<AWAITED_VALUE> f1 = waiter.await();
 					CompletableFuture<R> f2 = f1.thenApply(map);
 					f2.whenComplete((r, t) -> f1.cancel(true));
 					return f2;
